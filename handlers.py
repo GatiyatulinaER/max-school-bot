@@ -27,6 +27,7 @@ dp = Dispatcher()
 
 user_states = {}
 user_step = {}
+temp_feedback = {}  # Временное хранилище для данных обращения (ФИО, телефон, текст)
 
 
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
@@ -40,6 +41,22 @@ def validate_birth_date(date_str: str) -> bool:
         return birth_date <= datetime.now()
     except ValueError:
         return False
+
+
+def validate_phone(phone: str) -> bool:
+    """Простая валидация номера телефона"""
+    digits = re.sub(r'\D', '', phone)
+    return len(digits) in [10, 11]
+
+
+def format_phone(phone: str) -> str:
+    """Форматирует номер телефона для красивого вывода"""
+    digits = re.sub(r'\D', '', phone)
+    if len(digits) == 11:
+        return f"+{digits[0]} {digits[1:4]} {digits[4:7]} {digits[7:9]} {digits[9:11]}"
+    elif len(digits) == 10:
+        return f"+7 {digits[0:3]} {digits[3:6]} {digits[6:8]} {digits[8:10]}"
+    return phone
 
 
 def get_request_chat_id(building_type: str):
@@ -109,7 +126,6 @@ async def my_requests(event: MessageCallback):
     user_id = event.callback.user.user_id
     requests = get_user_requests(user_id)
 
-    # Фильтруем заявки за последние 5 дней
     five_days_ago = datetime.now().timestamp() - (5 * 24 * 60 * 60)
     recent_requests = []
 
@@ -225,7 +241,7 @@ async def confirm_yes(event: MessageCallback):
              f"📌 **Отслеживать статус заявки вы можете в разделе:**\n"
              f"   «📋 Мои заявки» в главном меню\n\n"
              f"🔄 Статус обновляется автоматически при его изменении администратором.\n\n"
-             f"🙏 Спасибо за обращение! Ждем Вас в нашем канале https://max.ru/id7452019867_gos",
+             f"🙏 Спасибо за обращение!",
         attachments=[main_menu()]
     )
 
@@ -269,11 +285,13 @@ async def cancel_handler(event: MessageCallback):
     user_id = event.callback.user.user_id
     user_states.pop(user_id, None)
     user_step.pop(user_id, None)
+    if user_id in temp_feedback:
+        del temp_feedback[user_id]
     await bot.send_message(chat_id=event.message.recipient.chat_id, text="❌ Отменено", attachments=[main_menu()])
     await event.answer()
 
 
-# ========== ОБРАЩЕНИЯ И ПРЕДЛОЖЕНИЯ ==========
+# ========== ОБРАЩЕНИЯ И ПРЕДЛОЖЕНИЯ (С ФИО, ТЕЛЕФОНОМ, ТЕКСТОМ) ==========
 @dp.message_callback(F.callback.payload == "new_feedback")
 async def new_feedback(event: MessageCallback):
     await bot.send_message(
@@ -286,15 +304,29 @@ async def new_feedback(event: MessageCallback):
 
 @dp.message_callback(F.callback.payload == "complaint")
 async def new_complaint(event: MessageCallback):
-    user_step[event.callback.user.user_id] = "complaint"
-    await bot.send_message(chat_id=event.message.recipient.chat_id, text="⚠️ Напишите ваше обращение или жалобу:")
+    user_id = event.callback.user.user_id
+    temp_feedback[user_id] = {"type": "complaint", "step": "fullname"}
+    await bot.send_message(
+        chat_id=event.message.recipient.chat_id,
+        text="👤 **Представьтесь, пожалуйста:**\n\n"
+             "Введите ваши ФИО полностью.\n"
+             "Например: `Иванов Иван Иванович`\n\n"
+             "📌 Это нужно, чтобы администратор знал, к кому обращаться."
+    )
     await event.answer()
 
 
 @dp.message_callback(F.callback.payload == "suggestion")
 async def new_suggestion(event: MessageCallback):
-    user_step[event.callback.user.user_id] = "suggestion"
-    await bot.send_message(chat_id=event.message.recipient.chat_id, text="💡 Напишите ваше предложение:")
+    user_id = event.callback.user.user_id
+    temp_feedback[user_id] = {"type": "suggestion", "step": "fullname"}
+    await bot.send_message(
+        chat_id=event.message.recipient.chat_id,
+        text="👤 **Представьтесь, пожалуйста:**\n\n"
+             "Введите ваши ФИО полностью.\n"
+             "Например: `Иванов Иван Иванович`\n\n"
+             "📌 Это нужно, чтобы администратор знал, к кому обращаться."
+    )
     await event.answer()
 
 
@@ -325,8 +357,10 @@ async def my_feedback(event: MessageCallback):
             text += "╔" + "═" * 58 + "╗\n"
             text += f"║ {type_emoji} {type_name} #{f['id']} {status_emoji}\n"
             text += "╠" + "═" * 58 + "╣\n"
+            text += f"║ 👤 Отправитель: {f['fullname']}\n"
+            text += f"║ 📞 Телефон: {f.get('phone', 'не указан')}\n"
+            text += "║\n"
 
-            # Разбиваем длинный текст на строки
             message_text = f['message']
             text += "║ 📝 Текст обращения:\n"
             for i in range(0, len(message_text), 52):
@@ -344,7 +378,6 @@ async def my_feedback(event: MessageCallback):
             elif f["status"] == "in_progress":
                 text += "║\n"
                 text += "║ 🔄 Ваше обращение взято в работу.\n"
-                text += "║    Администратор готовит ответ.\n"
             elif f["status"] == "pending":
                 text += "║\n"
                 text += "║ ⏳ Обращение ожидает рассмотрения.\n"
@@ -364,6 +397,124 @@ async def handle_text(event: MessageCreated):
     if not text or text.startswith('/'):
         return
 
+    # ========== ОБРАБОТКА ОБРАЩЕНИЙ (СБОР ФИО, ТЕЛЕФОНА И ТЕКСТА) ==========
+    if user_id in temp_feedback:
+        step = temp_feedback[user_id].get("step")
+
+        # ШАГ 1: ВВОД ФИО
+        if step == "fullname":
+            fullname = text.strip()
+
+            if len(fullname.split()) < 2:
+                await event.message.answer(
+                    "❌ **Пожалуйста, введите полные ФИО!**\n\n"
+                    "Введите ваши Фамилию, Имя и Отчество полностью.\n"
+                    "Например: `Иванов Иван Иванович`"
+                )
+                return
+
+            temp_feedback[user_id]["fullname"] = fullname
+            temp_feedback[user_id]["step"] = "phone"
+
+            first_name = fullname.split()[1] if len(fullname.split()) > 1 else fullname.split()[0]
+
+            await event.message.answer(
+                f"✅ **Спасибо, {first_name}!**\n\n"
+                f"📞 Теперь укажите ваш номер телефона для связи:\n\n"
+                f"Введите номер в любом формате:\n"
+                f"• `+7 999 123 45 67`\n"
+                f"• `89991234567`\n"
+                f"• `9991234567`"
+            )
+            return
+
+        # ШАГ 2: ВВОД ТЕЛЕФОНА
+        elif step == "phone":
+            phone_raw = text.strip()
+
+            if not validate_phone(phone_raw):
+                await event.message.answer(
+                    "❌ **Неверный формат номера телефона!**\n\n"
+                    "Пожалуйста, введите номер в одном из форматов:\n"
+                    "• `+7 999 123 45 67`\n"
+                    "• `89991234567`\n"
+                    "• `9991234567`\n\n"
+                    "Попробуйте ещё раз:"
+                )
+                return
+
+            formatted_phone = format_phone(phone_raw)
+            temp_feedback[user_id]["phone"] = formatted_phone
+            temp_feedback[user_id]["phone_raw"] = re.sub(r'\D', '', phone_raw)
+            temp_feedback[user_id]["step"] = "message"
+
+            await event.message.answer(
+                f"✅ **Номер телефона сохранён:** `{formatted_phone}`\n\n"
+                f"📝 **Теперь напишите текст вашего обращения:**\n\n"
+                f"✏️ Опишите вашу проблему или предложение как можно подробнее."
+            )
+            return
+
+        # ШАГ 3: ВВОД ТЕКСТА ОБРАЩЕНИЯ
+        elif step == "message":
+            fb_type = temp_feedback[user_id]["type"]
+            user_fullname = temp_feedback[user_id]["fullname"]
+            phone = temp_feedback[user_id]["phone"]
+            phone_raw = temp_feedback[user_id].get("phone_raw", "")
+
+            type_name = "Обращение" if fb_type == "complaint" else "Предложение"
+            type_emoji = "⚠️" if fb_type == "complaint" else "💡"
+
+            feedback_id = save_feedback({
+                "user_id": user_id,
+                "fullname": user_fullname,
+                "phone": phone,
+                "phone_raw": phone_raw,
+                "message": text,
+                "type": fb_type
+            })
+
+            chat_id = get_feedback_chat_id(fb_type)
+            admin_text = f"{type_emoji} **НОВОЕ {type_name.upper()}**\n\n"
+            admin_text += f"📋 **№{feedback_id}**\n"
+            admin_text += f"👤 **Отправитель:** {user_fullname}\n"
+            admin_text += f"🆔 **ID:** `{user_id}`\n"
+            admin_text += f"📞 **Телефон:** `{phone}`\n"
+            admin_text += f"📝 **Текст:**\n{text}\n"
+            admin_text += f"🕒 {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n\n"
+            admin_text += f"📌 **Порядок действий:**\n"
+            admin_text += f"1️⃣ Нажмите «Взять в работу»\n"
+            admin_text += f"2️⃣ Пользователь получит кнопку «Получить ответ»\n"
+            admin_text += f"3️⃣ Когда пользователь нажмёт кнопку, вы сможете ответить в ЛС\n"
+            admin_text += f"4️⃣ После ответа нажмите «Отметить как отвеченное»"
+
+            try:
+                btn_take = CallbackButton(text="🔵 Взять в работу", payload=f"take_fb_{feedback_id}",
+                                          intent=Intent.POSITIVE)
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=admin_text,
+                    attachments=[Attachment(type="inline_keyboard", payload=ButtonsPayload(buttons=[[btn_take]]))]
+                )
+                print(f"✅ Обращение #{feedback_id} отправлено в чат {chat_id}")
+            except Exception as e:
+                print(f"❌ Ошибка отправки: {e}")
+
+            first_name = user_fullname.split()[1] if len(user_fullname.split()) > 1 else user_fullname.split()[0]
+
+            await event.message.answer(
+                f"✅ **{type_name} #{feedback_id} отправлено!**\n\n"
+                f"👤 **{first_name}**, ваше обращение принято.\n"
+                f"📞 Администратор свяжется с вами в MAX.\n\n"
+                f"📌 **Что дальше?**\n"
+                f"   • Вы можете отслеживать статус в разделе «✉️ Мои обращения»\n\n"
+                f"🙏 Спасибо за обращение!"
+            )
+
+            del temp_feedback[user_id]
+            return
+
+    # ========== ЗАЯВКИ НА СПРАВКИ ==========
     state = user_states.get(user_id, {})
     step = state.get("step")
 
@@ -399,47 +550,6 @@ async def handle_text(event: MessageCreated):
         return
     elif step == "waiting_confirm":
         await event.message.answer("⏳ Подтвердите или отмените заявку кнопками.")
-        return
-
-    # Проверяем обращения
-    if user_id in user_step:
-        fb_type = user_step[user_id]
-        type_name = "Обращение" if fb_type == "complaint" else "Предложение"
-        type_emoji = "⚠️" if fb_type == "complaint" else "💡"
-        fullname = event.message.sender.first_name or str(user_id)
-
-        feedback_id = save_feedback({
-            "user_id": user_id, "fullname": fullname, "message": text, "type": fb_type
-        })
-
-        chat_id = get_feedback_chat_id(fb_type)
-        admin_text = f"{type_emoji} **НОВОЕ {type_name.upper()}**\n\n"
-        admin_text += f"📋 **№{feedback_id}**\n"
-        admin_text += f"👤 {fullname}\n"
-        admin_text += f"🆔 ID пользователя: `{user_id}`\n"
-        admin_text += f"📝 {text}\n"
-        admin_text += f"🕒 {datetime.now().strftime('%d.%m.%Y %H:%M')}\n\n"
-        admin_text += f"📌 **Порядок действий:**\n"
-        admin_text += f"1️⃣ Нажмите «Взять в работу»\n"
-        admin_text += f"2️⃣ Ответьте пользователю в ЛС (используя его ID)\n"
-        admin_text += f"3️⃣ Нажмите «Отметить как отвеченное»"
-
-        try:
-            btn_take = CallbackButton(text="🔵 Взять в работу", payload=f"take_fb_{feedback_id}", intent=Intent.POSITIVE)
-            await bot.send_message(chat_id=chat_id, text=admin_text, attachments=[
-                Attachment(type="inline_keyboard", payload=ButtonsPayload(buttons=[[btn_take]]))])
-        except Exception as e:
-            print(f"❌ Ошибка отправки: {e}")
-
-        await event.message.answer(
-            f"✅ **{type_name} #{feedback_id} отправлено!**\n\n"
-            f"Администратор рассмотрит ваше обращение и ответит вам в личные сообщения.\n\n"
-             f"📌 **Отслеживать статус обращения вы можете в разделе:**\n"
-             f"   «📋 Мои обращения» в главном меню\n\n"
-             f"🔄 Статус обновляется автоматически при его изменении администратором.\n\n"
-            f"🙏 Спасибо за обращение! Ждем Вас в нашем канале https://max.ru/id7452019867_gos"
-        )
-        user_step.pop(user_id, None)
         return
 
     await cmd_start(event)
@@ -609,33 +719,167 @@ async def show_all_requests(event: MessageCallback):
 # ========== ОБРАБОТЧИКИ ДЛЯ ОБРАЩЕНИЙ (ГРУППЫ) ==========
 @dp.message_callback(F.callback.payload.startswith("take_fb_"))
 async def take_feedback(event: MessageCallback):
+    """Взять обращение в работу и отправить пользователю кнопку"""
     try:
-        feedback_id = int(event.callback.payload.split("_")[2])
+        parts = event.callback.payload.split("_")
+        feedback_id = int(parts[2])
+
+        print(f"🔍 Обработка take_feedback для обращения #{feedback_id}")
+
         feedback = get_feedback_by_id(feedback_id)
+
         if not feedback:
             await event.answer(notification="❌ Обращение не найдено", show_alert=True)
             return
 
+        print(f"✅ Обращение найдено: {feedback['fullname']}, user_id={feedback['user_id']}")
+
         update_feedback_status(feedback_id, "in_progress", event.callback.user.first_name)
 
-        btn_done = CallbackButton(text="✅ Отметить как отвеченное", payload=f"done_fb_{feedback_id}",
-                                  intent=Intent.POSITIVE)
+        # ========== ОТПРАВЛЯЕМ ПОЛЬЗОВАТЕЛЮ КНОПКУ ==========
+        user_notified = False
+
+        try:
+            btn_ready = CallbackButton(
+                text="📨 Получить ответ администратора",
+                payload=f"user_ready_for_answer_{feedback_id}",
+                intent=Intent.POSITIVE
+            )
+            user_payload = ButtonsPayload(buttons=[[btn_ready]])
+            user_attachment = Attachment(type="inline_keyboard", payload=user_payload)
+
+            first_name = feedback['fullname'].split()[1] if len(feedback['fullname'].split()) > 1 else \
+            feedback['fullname'].split()[0]
+
+            await bot.send_message(
+                chat_id=feedback["user_id"],
+                text=f"🔵 **{first_name}, ваше обращение #{feedback_id} взято в работу!**\n\n"
+                     f"👨‍💻 Администратор: {event.callback.user.first_name}\n\n"
+                     f"📌 **Когда будете готовы получить ответ, нажмите кнопку ниже:**",
+                attachments=[user_attachment]
+            )
+            user_notified = True
+            print(f"✅ Уведомление с кнопкой отправлено пользователю {feedback['user_id']}")
+
+        except Exception as e:
+            error_msg = str(e)
+            if "chat.not.found" in error_msg:
+                print(f"⚠️ Пользователь {feedback['user_id']} еще не писал боту")
+            else:
+                print(f"❌ Ошибка: {e}")
+
+        # ========== КНОПКИ ДЛЯ АДМИНИСТРАТОРА ==========
+
+        # Новая кнопка для копирования телефона
+        btn_copy_phone = CallbackButton(
+            text=f"📋 Скопировать телефон: {feedback.get('phone', 'не указан')}",
+            payload=f"copy_phone_{feedback_id}",
+            intent=Intent.DEFAULT
+        )
+
+        btn_done = CallbackButton(
+            text="✅ Отметить как отвеченное",
+            payload=f"done_fb_{feedback_id}",
+            intent=Intent.POSITIVE
+        )
+
+        admin_text = f"🔵 **Обращение #{feedback_id} (В РАБОТЕ)**\n\n"
+        admin_text += f"👤 {feedback['fullname']}\n"
+        admin_text += f"🆔 ID: `{feedback['user_id']}`\n"
+        admin_text += f"📞 Телефон: `{feedback.get('phone', 'не указан')}`\n"
+        admin_text += f"📝 {feedback['message']}\n\n"
+        admin_text += f"👨‍💻 Взял: {event.callback.user.first_name}\n\n"
+
+        if user_notified:
+            admin_text += f"✅ Пользователю отправлена кнопка «Получить ответ»\n"
+        else:
+            admin_text += f"⚠️ **Пользователь ещё не писал боту!**\n\n"
+            admin_text += f"📌 **Что делать:**\n"
+            admin_text += f"   1️⃣ Нажмите кнопку ниже, чтобы скопировать телефон пользователя\n"
+            admin_text += f"   2️⃣ Свяжитесь с пользователем по телефону\n\n"
+
+        admin_text += f"✅ **После ответа пользователю нажмите кнопку:**"
+
+        admin_buttons = [[btn_copy_phone], [btn_done]]
+        admin_attachment = Attachment(type="inline_keyboard", payload=ButtonsPayload(buttons=admin_buttons))
 
         await bot.send_message(
             chat_id=event.message.recipient.chat_id,
-            text=f"🔵 **Обращение #{feedback_id} (В РАБОТЕ)**\n\n"
-                 f"👤 {feedback['fullname']}\n🆔 ID: `{feedback['user_id']}`\n"
-                 f"📝 {feedback['message']}\n\n👨‍💻 Взял: {event.callback.user.first_name}\n\n"
-                 f"📌 **После ответа пользователю в ЛС, нажмите кнопку:**",
-            attachments=[Attachment(type="inline_keyboard", payload=ButtonsPayload(buttons=[[btn_done]]))]
+            text=admin_text,
+            attachments=[admin_attachment]
         )
         await event.answer(notification="✅ Обращение взято в работу")
+
     except Exception as e:
-        print(f"❌ Ошибка: {e}")
+        print(f"❌ Ошибка в take_feedback: {e}")
+        await event.answer(notification=f"❌ Ошибка: {e}", show_alert=True)
+
+
+@dp.message_callback(F.callback.payload.startswith("copy_phone_"))
+async def copy_phone_number(event: MessageCallback):
+    """Отправляет номер телефона пользователя для копирования"""
+    try:
+        feedback_id = int(event.callback.payload.split("_")[2])
+        feedback = get_feedback_by_id(feedback_id)
+
+        if not feedback:
+            await event.answer(notification="❌ Обращение не найдено", show_alert=True)
+            return
+
+        phone = feedback.get('phone', 'не указан')
+
+        await bot.send_message(
+            chat_id=event.message.recipient.chat_id,
+            text=f"📋 **Телефон пользователя для копирования:**\n\n"
+                 f"`{phone}`\n\n"
+                 f"👤 {feedback['fullname']}\n"
+                 f"📋 Обращение #{feedback_id}\n\n"
+                 f"💡 Вы можете связаться с пользователем по этому номеру."
+        )
+        await event.answer()
+
+    except Exception as e:
+        print(f"❌ Ошибка в copy_phone_number: {e}")
+        await event.answer(notification=f"❌ Ошибка: {e}", show_alert=True)
+
+
+@dp.message_callback(F.callback.payload.startswith("user_ready_for_answer_"))
+async def user_ready_for_answer(event: MessageCallback):
+    """Пользователь нажал кнопку, чтобы получить ответ"""
+    try:
+        feedback_id = int(event.callback.payload.split("_")[3])
+        feedback = get_feedback_by_id(feedback_id)
+
+        if not feedback:
+            await event.answer(notification="❌ Обращение не найдено", show_alert=True)
+            return
+
+        chat_id = get_feedback_chat_id(feedback["type"])
+
+        await bot.send_message(
+            chat_id=chat_id,
+            text=f"✅ **Пользователь готов получить ответ!**\n\n"
+                 f"📋 Обращение #{feedback_id}\n"
+                 f"👤 {feedback['fullname']}\n"
+                 f"🆔 ID: `{feedback['user_id']}`\n"
+                 f"📞 Телефон: `{feedback.get('phone', 'не указан')}`\n\n"
+                 f"📌 **Теперь вы можете ответить ему в ЛС** — диалог открыт.\n"
+                 f"   Просто напишите сообщение в этот диалог с ботом."
+        )
+
+        await event.message.answer(
+            text="✅ **Ожидайте ответа администратора!**\n\n"
+                 "Администратор скоро ответит вам в этот чат."
+        )
+        await event.answer()
+
+    except Exception as e:
+        print(f"❌ Ошибка в user_ready_for_answer: {e}")
 
 
 @dp.message_callback(F.callback.payload.startswith("done_fb_"))
 async def done_feedback(event: MessageCallback):
+    """Отметить обращение как отвеченное"""
     try:
         feedback_id = int(event.callback.payload.split("_")[2])
         feedback = get_feedback_by_id(feedback_id)
@@ -648,11 +892,23 @@ async def done_feedback(event: MessageCallback):
         await bot.send_message(
             chat_id=event.message.recipient.chat_id,
             text=f"✅ **Обращение #{feedback_id} (ОТВЕЧЕНО)**\n\n"
-                 f"👤 {feedback['fullname']}\n✅ Отвечено: {event.callback.user.first_name}"
+                 f"👤 {feedback['fullname']}\n"
+                 f"✅ Отвечено: {event.callback.user.first_name}\n"
+                 f"🕒 {datetime.now().strftime('%d.%m.%Y %H:%M')}"
         )
+
+        try:
+            await bot.send_message(
+                chat_id=feedback["user_id"],
+                text=f"✅ **Ваше обращение #{feedback_id} отмечено как отвеченное!**\n\n"
+                     f"Спасибо, что обратились к нам!"
+            )
+        except:
+            pass
+
         await event.answer(notification="✅ Обращение отмечено как отвеченное")
     except Exception as e:
-        print(f"❌ Ошибка: {e}")
+        print(f"❌ Ошибка в done_feedback: {e}")
 
 
 @dp.message_callback(F.callback.payload == "admin_active_feedback")
@@ -669,7 +925,11 @@ async def admin_active_feedback(event: MessageCallback):
         type_name = "Обращение" if fb["type"] == "complaint" else "Предложение"
         type_emoji = "⚠️" if fb["type"] == "complaint" else "💡"
         status = FEEDBACK_STATUS_TEXT.get(fb["status"], "🟡 Ожидает")
-        text += f"{type_emoji} **{type_name} #{fb['id']}**\n👤 {fb['fullname']}\n🆔 `{fb['user_id']}`\n📊 {status}\n\n"
+        text += f"{type_emoji} **{type_name} #{fb['id']}**\n"
+        text += f"👤 {fb['fullname']}\n"
+        text += f"📞 {fb.get('phone', 'телефон не указан')}\n"
+        text += f"🆔 `{fb['user_id']}`\n"
+        text += f"📊 {status}\n\n"
 
     await bot.send_message(chat_id=event.message.recipient.chat_id, text=text,
                            attachments=[get_feedback_list_buttons()])
@@ -690,7 +950,10 @@ async def admin_all_feedback(event: MessageCallback):
         type_name = "Обращение" if fb["type"] == "complaint" else "Предложение"
         type_emoji = "⚠️" if fb["type"] == "complaint" else "💡"
         status = FEEDBACK_STATUS_TEXT.get(fb["status"], "🟡 Ожидает")
-        text += f"{type_emoji} **{type_name} #{fb['id']}**\n👤 {fb['fullname']}\n🆔 `{fb['user_id']}`\n"
+        text += f"{type_emoji} **{type_name} #{fb['id']}**\n"
+        text += f"👤 {fb['fullname']}\n"
+        text += f"📞 {fb.get('phone', 'телефон не указан')}\n"
+        text += f"🆔 `{fb['user_id']}`\n"
         text += f"📊 {status}\n🕒 {fb['created_at'][:16]}\n\n"
 
     await bot.send_message(chat_id=event.message.recipient.chat_id, text=text)
