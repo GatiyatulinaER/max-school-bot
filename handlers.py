@@ -27,11 +27,87 @@ dp = Dispatcher()
 
 user_states = {}
 user_step = {}
-temp_feedback = {}  # Временное хранилище для данных обращения (ФИО, телефон, текст)
+temp_feedback = {}
 
 
-# ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
+# ========== ФУНКЦИИ ПРОВЕРКИ ДЛЯ ЗАЯВОК ==========
+def validate_fullname(fullname: str) -> tuple:
+    """
+    Проверяет ФИО пользователя для заявки на справку
+    Возвращает: (is_valid, error_message, formatted_name)
+    """
+    # Удаляем лишние пробелы
+    fullname = ' '.join(fullname.split())
+
+    if not fullname:
+        return False, "❌ ФИО не может быть пустым", None
+
+    # Разбиваем на части
+    parts = fullname.split()
+
+    # Проверяем количество слов (минимум 2 - фамилия и имя)
+    if len(parts) < 2:
+        return False, "❌ Введите **Фамилию и Имя** (минимум 2 слова)\n\nПример: Иванов Иван Иванович", None
+
+    if len(parts) > 4:
+        return False, "❌ Слишком много слов. Введите: Фамилия Имя Отчество (не более 4 слов)", None
+
+    # Проверяем, что каждое слово начинается с заглавной буквы и исправляем
+    for i, part in enumerate(parts):
+        if part and not part[0].isupper():
+            parts[i] = part.capitalize()
+
+    # Проверяем на допустимые символы (только буквы, пробелы, дефис)
+    if not re.match(r'^[а-яА-ЯёЁa-zA-Z\s\-]+$', fullname):
+        return False, "❌ ФИО должно содержать только буквы, пробелы и дефис\n\nПример: Иванов Иван Иванович", None
+
+    # Проверяем длину каждого слова
+    for part in parts:
+        if len(part) < 2:
+            return False, f"❌ Слово '{part}' слишком короткое. Проверьте правильность ввода", None
+        if len(part) > 30:
+            return False, f"❌ Слово '{part[:15]}...' слишком длинное", None
+
+    # Форматируем правильно
+    formatted = ' '.join(parts)
+
+    return True, None, formatted
+
+
+def validate_class_number(class_str: str) -> tuple:
+    """
+    Проверяет класс (только цифровой, с точкой)
+    Форматы: 9.1, 1.1, 10.2, 11.5
+    Возвращает: (is_valid, error_message, formatted_class)
+    """
+    class_str = class_str.strip()
+
+    # Проверяем формат: цифра.цифра (например 9.1)
+    pattern = r'^\d{1,2}\.\d{1}$'
+
+    if not re.match(pattern, class_str):
+        return False, "❌ Неверный формат класса\n\nИспользуйте формат: **номер.подгруппа**\nПримеры: 9.1, 10.2, 11.5", None
+
+    try:
+        main_class = int(class_str.split('.')[0])
+        subgroup = int(class_str.split('.')[1])
+
+        # Проверяем основной класс
+        if main_class < 1 or main_class > 11:
+            return False, f"❌ Номер класса должен быть от 1 до 11 (вы ввели {main_class})", None
+
+        # Проверяем подгруппу
+        if subgroup < 1 or subgroup > 5:
+            return False, f"❌ Номер подгруппы должен быть от 1 до 5 (вы ввели {subgroup})", None
+
+        return True, None, class_str
+
+    except (ValueError, IndexError):
+        return False, "❌ Неверный формат класса\n\nИспользуйте формат: **9.1** или **10.2**", None
+
+
 def validate_birth_date(date_str: str) -> bool:
+    """Проверяет дату рождения"""
     pattern = r'^\d{2}\.\d{2}\.\d{4}$'
     if not re.match(pattern, date_str):
         return False
@@ -109,7 +185,10 @@ async def new_request(event: MessageCallback):
 async def building1_request(event: MessageCallback):
     user_id = event.callback.user.user_id
     user_states[user_id] = {"step": "fullname", "building": "building1"}
-    await bot.send_message(chat_id=event.message.recipient.chat_id, text="📝 Введите ФИО ученика:")
+    await bot.send_message(
+        chat_id=event.message.recipient.chat_id,
+        text="📝 Введите **Фамилию, Имя и Отчество** ученика\n\nПример: Иванов Иван Иванович"
+    )
     await event.answer()
 
 
@@ -117,7 +196,10 @@ async def building1_request(event: MessageCallback):
 async def building2_request(event: MessageCallback):
     user_id = event.callback.user.user_id
     user_states[user_id] = {"step": "fullname", "building": "building2"}
-    await bot.send_message(chat_id=event.message.recipient.chat_id, text="📝 Введите ФИО ученика:")
+    await bot.send_message(
+        chat_id=event.message.recipient.chat_id,
+        text="📝 Введите **Фамилию, Имя и Отчество** ученика\n\nПример: Иванов Иван Иванович"
+    )
     await event.answer()
 
 
@@ -241,7 +323,7 @@ async def confirm_yes(event: MessageCallback):
              f"📌 **Отслеживать статус заявки вы можете в разделе:**\n"
              f"   «📋 Мои заявки» в главном меню\n\n"
              f"🔄 Статус обновляется автоматически при его изменении администратором.\n\n"
-             f"🙏 Спасибо за обращение!",
+             f"🙏 Спасибо за обращение! Ждем Вас в нашем канале https://max.ru/id7452019867_gos",
         attachments=[main_menu()]
     )
 
@@ -291,7 +373,7 @@ async def cancel_handler(event: MessageCallback):
     await event.answer()
 
 
-# ========== ОБРАЩЕНИЯ И ПРЕДЛОЖЕНИЯ (С ФИО, ТЕЛЕФОНОМ, ТЕКСТОМ) ==========
+# ========== ОБРАЩЕНИЯ И ПРЕДЛОЖЕНИЯ ==========
 @dp.message_callback(F.callback.payload == "new_feedback")
 async def new_feedback(event: MessageCallback):
     await bot.send_message(
@@ -397,11 +479,10 @@ async def handle_text(event: MessageCreated):
     if not text or text.startswith('/'):
         return
 
-    # ========== ОБРАБОТКА ОБРАЩЕНИЙ (СБОР ФИО, ТЕЛЕФОНА И ТЕКСТА) ==========
+    # ========== ОБРАБОТКА ОБРАЩЕНИЙ ==========
     if user_id in temp_feedback:
         step = temp_feedback[user_id].get("step")
 
-        # ШАГ 1: ВВОД ФИО
         if step == "fullname":
             fullname = text.strip()
 
@@ -415,7 +496,6 @@ async def handle_text(event: MessageCreated):
 
             temp_feedback[user_id]["fullname"] = fullname
             temp_feedback[user_id]["step"] = "phone"
-
             first_name = fullname.split()[1] if len(fullname.split()) > 1 else fullname.split()[0]
 
             await event.message.answer(
@@ -428,7 +508,6 @@ async def handle_text(event: MessageCreated):
             )
             return
 
-        # ШАГ 2: ВВОД ТЕЛЕФОНА
         elif step == "phone":
             phone_raw = text.strip()
 
@@ -455,7 +534,6 @@ async def handle_text(event: MessageCreated):
             )
             return
 
-        # ШАГ 3: ВВОД ТЕКСТА ОБРАЩЕНИЯ
         elif step == "message":
             fb_type = temp_feedback[user_id]["type"]
             user_fullname = temp_feedback[user_id]["fullname"]
@@ -484,9 +562,6 @@ async def handle_text(event: MessageCreated):
             admin_text += f"🕒 {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n\n"
             admin_text += f"📌 **Порядок действий:**\n"
             admin_text += f"1️⃣ Нажмите «Взять в работу»\n"
-            admin_text += f"2️⃣ Пользователь получит кнопку «Получить ответ»\n"
-            admin_text += f"3️⃣ Когда пользователь нажмёт кнопку, вы сможете ответить в ЛС\n"
-            admin_text += f"4️⃣ После ответа нажмите «Отметить как отвеченное»"
 
             try:
                 btn_take = CallbackButton(text="🔵 Взять в работу", payload=f"take_fb_{feedback_id}",
@@ -508,7 +583,7 @@ async def handle_text(event: MessageCreated):
                 f"📞 Администратор свяжется с вами в MAX.\n\n"
                 f"📌 **Что дальше?**\n"
                 f"   • Вы можете отслеживать статус в разделе «✉️ Мои обращения»\n\n"
-                f"🙏 Спасибо за обращение!"
+                f"🙏 Спасибо за обращение! Ждем Вас в нашем канале https://max.ru/id7452019867_gos"
             )
 
             del temp_feedback[user_id]
@@ -518,40 +593,119 @@ async def handle_text(event: MessageCreated):
     state = user_states.get(user_id, {})
     step = state.get("step")
 
+    # ШАГ 1: ВВОД ФИО
     if step == "fullname":
-        user_states[user_id] = {"step": "class", "fullname": text, "building": state.get("building")}
-        await event.message.answer("📚 Введите класс (например, 9.5):")
+        is_valid, error, formatted = validate_fullname(text)
+
+        if not is_valid:
+            await event.message.answer(
+                f"{error}\n\n"
+                f"📝 **Пожалуйста, введите ФИО правильно:**\n"
+                f"• Формат: Фамилия Имя Отчество\n"
+                f"• Пример: Иванов Иван Иванович\n\n"
+                f"Попробуйте ещё раз:"
+            )
+            return
+
+        user_states[user_id] = {
+            "step": "class",
+            "fullname": formatted,
+            "building": state.get("building")
+        }
+        await event.message.answer(
+            f"✅ **ФИО принято:** `{formatted}`\n\n"
+            f"📚 Введите **класс** в формате **9.1** (номер.подгруппа):\n\n"
+            f"Примеры: 9.1, 10.2, 11.5"
+        )
         return
+
+    # ШАГ 2: ВВОД КЛАССА (только цифровой формат 9.1)
     elif step == "class":
-        user_states[user_id] = {"step": "birth_date", "fullname": state["fullname"], "class": text,
-                                "building": state.get("building")}
-        await event.message.answer("🎂 Введите дату рождения (ДД.ММ.ГГГГ):")
+        is_valid, error, formatted = validate_class_number(text)
+
+        if not is_valid:
+            await event.message.answer(
+                f"{error}\n\n"
+                f"📚 **Пожалуйста, введите класс в правильном формате:**\n"
+                f"• Формат: **номер.подгруппа**\n"
+                f"• Примеры: 9.1, 10.2, 11.5\n\n"
+                f"Попробуйте ещё раз:"
+            )
+            return
+
+        user_states[user_id] = {
+            "step": "birth_date",
+            "fullname": state["fullname"],
+            "class": formatted,
+            "building": state.get("building")
+        }
+        await event.message.answer(
+            f"✅ **Класс принят:** `{formatted}`\n\n"
+            f"🎂 Введите **дату рождения** в формате ДД.ММ.ГГГГ\n\n"
+            f"Пример: 15.05.2010"
+        )
         return
+
+    # ШАГ 3: ВВОД ДАТЫ РОЖДЕНИЯ
     elif step == "birth_date":
         if not validate_birth_date(text):
-            await event.message.answer("❌ Неверный формат! Используйте ДД.ММ.ГГГГ")
+            await event.message.answer(
+                "❌ **Неверный формат даты!**\n\n"
+                "Используйте формат: ДД.ММ.ГГГГ\n"
+                "Пример: 15.05.2010"
+            )
             return
-        user_states[user_id] = {"step": "reason", "fullname": state["fullname"], "class": state["class"],
-                                "birth_date": text, "building": state.get("building")}
-        await event.message.answer("📌 Укажите причину получения справки:")
+
+        user_states[user_id] = {
+            "step": "reason",
+            "fullname": state["fullname"],
+            "class": state["class"],
+            "birth_date": text,
+            "building": state.get("building")
+        }
+        await event.message.answer(
+            f"✅ **Дата рождения принята:** `{text}`\n\n"
+            f"📌 **Укажите причину получения справки:**\n\n"
+
+        )
         return
+
+    # ШАГ 4: ВВОД ПРИЧИНЫ
     elif step == "reason":
+        if len(text.strip()) < 5:
+            await event.message.answer(
+                "❌ **Причина слишком короткая!**\n\n"
+                "Пожалуйста, опишите причину подробнее (минимум 5 символов)."
+            )
+            return
+
         user_states[user_id] = {
             "step": "waiting_confirm",
             "building": state.get("building"),
             "fullname": state["fullname"],
             "class": state["class"],
             "birth_date": state["birth_date"],
-            "reason": text
+            "reason": text.strip()
         }
+
         building_name = BUILDING_NAMES.get(state.get("building"), "Справка")
-        msg = f"📝 **ПРОВЕРЬТЕ ДАННЫЕ:**\n\n🏫 {building_name}\n👤 {state['fullname']}\n📚 {state['class']}\n🎂 {state['birth_date']}\n📌 {text}\n\n✅ Всё правильно?"
+
+        msg = f"📝 **ПРОВЕРЬТЕ ДАННЫЕ ЗАЯВКИ:**\n\n"
+        msg += f"🏫 **Здание:** {building_name}\n"
+        msg += f"👤 **ФИО:** {state['fullname']}\n"
+        msg += f"📚 **Класс:** {state['class']}\n"
+        msg += f"🎂 **Дата рождения:** {state['birth_date']}\n"
+        msg += f"📌 **Причина:**\n{text.strip()}\n\n"
+        msg += f"✅ **Всё правильно?**"
+
         await event.message.answer(msg, attachments=[get_confirm_buttons()])
         return
+
     elif step == "waiting_confirm":
         await event.message.answer("⏳ Подтвердите или отмените заявку кнопками.")
         return
 
+    # Если нет активного шага - показываем меню
     await cmd_start(event)
 
 
@@ -736,7 +890,6 @@ async def take_feedback(event: MessageCallback):
 
         update_feedback_status(feedback_id, "in_progress", event.callback.user.first_name)
 
-        # ========== ОТПРАВЛЯЕМ ПОЛЬЗОВАТЕЛЮ КНОПКУ ==========
         user_notified = False
 
         try:
@@ -768,9 +921,6 @@ async def take_feedback(event: MessageCallback):
             else:
                 print(f"❌ Ошибка: {e}")
 
-        # ========== КНОПКИ ДЛЯ АДМИНИСТРАТОРА ==========
-
-        # Новая кнопка для копирования телефона
         btn_copy_phone = CallbackButton(
             text=f"📋 Скопировать телефон: {feedback.get('phone', 'не указан')}",
             payload=f"copy_phone_{feedback_id}",
