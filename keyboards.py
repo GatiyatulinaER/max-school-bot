@@ -1,7 +1,6 @@
 from maxapi.types import CallbackButton, ButtonsPayload, Attachment
 from maxapi.enums.intent import Intent
 
-
 def main_menu():
     """Главное меню пользователя"""
     btn1 = CallbackButton(text="📄 Заказать справку", payload="new_request", intent=Intent.POSITIVE)
@@ -12,7 +11,6 @@ def main_menu():
     payload = ButtonsPayload(buttons=[[btn1], [btn2], [btn3, btn4]])
     return Attachment(type="inline_keyboard", payload=payload)
 
-
 def building_menu():
     """Меню выбора здания для справки"""
     building1 = CallbackButton(text="🏫 Здание на ул. Марченко", payload="building1_request", intent=Intent.POSITIVE)
@@ -21,7 +19,6 @@ def building_menu():
 
     payload = ButtonsPayload(buttons=[[building1], [building2], [cancel]])
     return Attachment(type="inline_keyboard", payload=payload)
-
 
 def feedback_type_menu():
     """Меню выбора типа обращения"""
@@ -32,7 +29,6 @@ def feedback_type_menu():
     payload = ButtonsPayload(buttons=[[complaint], [suggestion], [cancel]])
     return Attachment(type="inline_keyboard", payload=payload)
 
-
 def get_confirm_buttons():
     """Кнопки подтверждения заявки"""
     yes = CallbackButton(text="✅ ДА, ОТПРАВИТЬ", payload="confirm_yes", intent=Intent.POSITIVE)
@@ -40,19 +36,15 @@ def get_confirm_buttons():
     payload = ButtonsPayload(buttons=[[yes], [no]])
     return Attachment(type="inline_keyboard", payload=payload)
 
-
 def get_reject_reasons_buttons(request_id: int):
     """Кнопки для выбора причины отклонения"""
     buttons = [
-        [CallbackButton(text="📝 Данные некорректно введены", payload=f"reject_{request_id}_wrong_data",
-                        intent=Intent.NEGATIVE)],
-        [CallbackButton(text="❌ Нет оснований для выдачи", payload=f"reject_{request_id}_no_basis",
-                        intent=Intent.NEGATIVE)],
+        [CallbackButton(text="📝 Данные некорректно введены", payload=f"reject_{request_id}_wrong_data", intent=Intent.NEGATIVE)],
+        [CallbackButton(text="❌ Нет оснований для выдачи", payload=f"reject_{request_id}_no_basis", intent=Intent.NEGATIVE)],
         [CallbackButton(text="◀️ Назад", payload="back_to_request", intent=Intent.DEFAULT)]
     ]
     payload = ButtonsPayload(buttons=buttons)
     return Attachment(type="inline_keyboard", payload=payload)
-
 
 def get_status_buttons(request_id: int, current_status: str):
     """Кнопки управления статусом заявки"""
@@ -65,8 +57,7 @@ def get_status_buttons(request_id: int, current_status: str):
         ])
     elif current_status == "in_progress":
         buttons.append([
-            CallbackButton(text="✅ ГОТОВО (можно забрать)", payload=f"status_completed_{request_id}",
-                           intent=Intent.POSITIVE)
+            CallbackButton(text="✅ ГОТОВО (можно забрать)", payload=f"status_completed_{request_id}", intent=Intent.POSITIVE)
         ])
 
     buttons.append([
@@ -75,7 +66,6 @@ def get_status_buttons(request_id: int, current_status: str):
 
     payload = ButtonsPayload(buttons=buttons)
     return Attachment(type="inline_keyboard", payload=payload)
-
 
 def get_feedback_status_buttons(feedback_id: int, current_status: str):
     """Кнопки для обращений"""
@@ -95,7 +85,6 @@ def get_feedback_status_buttons(feedback_id: int, current_status: str):
         return Attachment(type="inline_keyboard", payload=payload)
     return None
 
-
 def get_feedback_list_buttons():
     """Кнопки для списка обращений"""
     buttons = [
@@ -105,15 +94,12 @@ def get_feedback_list_buttons():
     payload = ButtonsPayload(buttons=buttons)
     return Attachment(type="inline_keyboard", payload=payload)
 
-
 # ========== СЛОВАРИ ==========
-
 BUILDING_NAMES = {
     "building1": "🏫 Здание на ул. Марченко",
     "building2": "🏫 Здание на ул. Танкистов"
 }
 
-# ========== АДРЕСА И ТЕЛЕФОНЫ ДЛЯ КАЖДОГО ЗДАНИЯ ==========
 BUILDING_INFO = {
     "building1": {
         "name": "Здание на ул. Марченко",
