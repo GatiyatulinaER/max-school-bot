@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-BOT_TOKEN = os.getenv("f9LHodD0cOKcj3PaUTHLw2zeRW7AS7JBlgX2IBCuR63mYgzujVmLshD0Vvcs68aC2hqBQtWCpJgtnNnRMvRH")
+BOT_TOKEN = os.getenv("")
 
 # ========== ВАШИ ID ==========
 ADMIN_ID = 33534631  # Ваш личный ID
